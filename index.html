@@ -138,6 +138,11 @@
   .req h3 { margin-bottom: 8px; }
   .submitbox { border-top: 1px solid var(--line); margin-top: 48px; padding-top: 24px; }
 
+  .phase { margin: 0; padding: 6px 16px; text-align: center; background: var(--tint); color: var(--accent); font-weight: 600; font-size: .9375rem; border-top: 1px solid var(--line); }
+  /* Che đề khi cửa sổ mất tiêu điểm (công cụ chụp màn hình, chuyển cửa sổ) */
+  .shield { position: fixed; inset: 0; z-index: 40; background: var(--paper); display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; cursor: pointer; }
+  .shield p { font-weight: 600; font-size: 1.125rem; max-width: 26rem; }
+
   /* Watermark: răn đe chụp màn hình */
   .wm { position: fixed; inset: 0; pointer-events: none; z-index: 30; opacity: .07; background-repeat: repeat; }
 
@@ -215,7 +220,9 @@
       <div class="save" id="save">Chưa có thay đổi</div>
       <button class="btn" type="button" id="btn-submit-top">Nộp bài</button>
     </div>
+    <p class="phase hidden" id="phase">Đã hết 50 phút. Bạn có thêm 40 phút; hết thời gian này bài được nộp tự động.</p>
   </header>
+  <div class="shield hidden" id="shield" aria-hidden="true"><p>Nội dung bài thi được ẩn khi bạn rời cửa sổ này.<br>Bấm vào đây để làm tiếp.</p></div>
   <div class="exam wrap" id="exam"></div>
 </div>
 
@@ -455,12 +462,23 @@ async function doSave(final, opts = {}) {
   } finally { saving = false; }
 }
 
+const EXTRA_MS = 40 * 60000; // 50 phút chính + 40 phút thêm giờ = 90 phút (hạn trên máy chủ)
+let extNotified = false;
+const fmt = (ms) => `${String(Math.floor(ms / 60000)).padStart(2, "0")}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
 function tick() {
   if (submitted) return;
-  const left = Math.max(0, deadline - (Date.now() + clockOffset));
-  const m = Math.floor(left / 60000), s = Math.floor((left % 60000) / 1000);
+  const left = Math.max(0, deadline - (Date.now() + clockOffset)), main = left - EXTRA_MS;
   const el = $("timer");
-  el.textContent = `Còn ${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  if (main > 0) {
+    el.textContent = `Còn ${fmt(main)}`;
+  } else {
+    el.textContent = `Thêm giờ, còn ${fmt(left)}`;
+    if (!extNotified) {
+      extNotified = true; logEvent("extra_time");
+      $("phase").classList.remove("hidden");
+      announce("Đã hết 50 phút. Bạn có thêm 40 phút; hết thời gian này bài được nộp tự động.");
+    }
+  }
   if (left <= 5 * 60000) {
     el.classList.add("low");
     if (!warned) { warned = true; announce("Còn 5 phút. Bài sẽ được nộp tự động khi hết giờ."); }
@@ -502,6 +520,7 @@ function showDone(st) {
   $("screen-login").classList.add("hidden");
   $("screen-exam").classList.add("hidden");
   $("wm").classList.add("hidden");
+  $("shield").classList.add("hidden");
   $("screen-done").classList.remove("hidden");
   $("done-time").textContent = `Bài đã được ghi nhận lúc ${new Date().toLocaleString("vi-VN")}.`;
   $("done-who").textContent = st && st.ho_ten ? `${st.ho_ten}, mã SV ${st.ma_sv}` : "";
@@ -515,6 +534,7 @@ function setWatermark(text) {
   const wm = $("wm"); wm.style.backgroundImage = `url("data:image/svg+xml;utf8,${encodeURIComponent(svg).replace(/%2523/g, "%23")}")`;
   wm.classList.remove("hidden");
 }
+function shield(on) { if (!submitted) $("shield").classList.toggle("hidden", !on); }
 function startGuards() {
   const block = (e, t) => { e.preventDefault(); logEvent(t); };
   ["copy", "cut"].forEach((ev) => document.addEventListener(ev, (e) => block(e, ev + "_blocked")));
@@ -529,8 +549,12 @@ function startGuards() {
     if (e.metaKey && e.shiftKey && ["3", "4", "5", "s"].includes(k)) logEvent("screenshot_key");
   });
   document.addEventListener("keyup", (e) => {
-    if (e.key === "PrintScreen") { logEvent("screenshot_key"); try { navigator.clipboard.writeText(""); } catch {} }
+    if (e.key === "PrintScreen") { shield(true); logEvent("screenshot_key"); try { navigator.clipboard.writeText(""); } catch {} }
   });
+  // Che đề khi cửa sổ mất tiêu điểm: Win+Shift+S / Snipping Tool / chuyển cửa sổ. Không chặn việc chuyển cửa sổ.
+  window.addEventListener("blur", () => { if (!submitted && !$("dlg-submit").open) { shield(true); logEvent("blur"); } });
+  window.addEventListener("focus", () => shield(false));
+  $("shield").addEventListener("click", () => shield(false));
   window.addEventListener("beforeprint", () => logEvent("print"));
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) { hiddenAt = Date.now(); logEvent("hidden"); if (dirty) doSave(false, { keepalive: true }); }
