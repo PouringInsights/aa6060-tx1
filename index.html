@@ -67,6 +67,11 @@
   .field label { display: block; font-weight: 600; margin-bottom: 6px; }
   .field .hint { color: var(--muted); font-size: .9375rem; margin-top: 4px; }
   .field .error { color: var(--alert); font-size: .9375rem; margin-top: 6px; font-weight: 500; }
+  .confirm { max-width: 30rem; border-top: 1px solid var(--line); padding-top: 20px; }
+  .confirm p { margin-bottom: 4px; }
+  .confirm-name { font-size: 1.25rem; font-weight: 700; }
+  .confirm-meta { color: var(--muted); }
+  .confirm .row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
   select, input[type=text] {
     width: 100%; min-height: 48px; padding: 10px 12px; font: inherit; color: var(--ink);
     background: var(--surface); border: 1.5px solid #9aa3b0; border-radius: var(--radius);
@@ -178,30 +183,27 @@
     <ul>
       <li>Được sử dụng tài liệu. Giảng viên có thể hỏi lại trực tiếp về bài làm.</li>
       <li>Câu trả lời phải gõ trực tiếp; không dán được nội dung từ nơi khác.</li>
-      <li>Nếu mất mạng hoặc tải lại trang, đăng nhập lại bằng đúng tên và mã sinh viên để làm tiếp.</li>
+      <li>Nếu mất mạng hoặc tải lại trang, nhập lại mã sinh viên để làm tiếp.</li>
     </ul>
   </div>
   <form id="login-form" novalidate>
     <div class="field">
-      <label for="f-ca">Ca học</label>
-      <select id="f-ca" required><option value="">Đang tải danh sách…</option></select>
-      <div class="error hidden" id="e-ca"></div>
-    </div>
-    <div class="field">
-      <label for="f-name">Họ và tên</label>
-      <select id="f-name" required disabled><option value="">Chọn ca học trước</option></select>
-      <div class="hint">Số đứng trước tên là số thứ tự trong danh sách lớp.</div>
-      <div class="error hidden" id="e-name"></div>
-    </div>
-    <div class="field">
       <label for="f-ma">Mã sinh viên</label>
       <input type="text" id="f-ma" inputmode="numeric" autocomplete="off" maxlength="12" required>
-      <div class="hint">Chỉ gồm chữ số. Dùng lại đúng mã này nếu cần vào lại bài.</div>
       <div class="error hidden" id="e-ma"></div>
     </div>
-    <button class="btn" type="submit" id="btn-start">Bắt đầu làm bài</button>
-    <div class="error hidden" id="e-form" role="alert" style="margin-top:12px"></div>
+    <button class="btn" type="submit" id="btn-check">Tiếp tục</button>
   </form>
+  <div class="confirm hidden" id="confirm">
+    <p>Bạn là:</p>
+    <p class="confirm-name" id="c-name"></p>
+    <p class="confirm-meta" id="c-meta"></p>
+    <div class="row">
+      <button class="btn" type="button" id="btn-start">Bắt đầu làm bài</button>
+      <button class="btn secondary" type="button" id="btn-back">Không phải tôi</button>
+    </div>
+  </div>
+  <div class="error hidden" id="e-form" role="alert" style="margin-top:12px"></div>
 </section>
 
 <!-- ============ Làm bài ============ -->
@@ -262,46 +264,42 @@ async function rpc(fn, args, opts = {}) {
 function announce(msg) { $("live").textContent = msg; }
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
-/* ---------------- Đăng nhập ---------------- */
-let roster = [];
+/* ---------------- Đăng nhập: nhập mã SV → xác nhận họ tên → bắt đầu ---------------- */
 function showErr(id, msg) { const el = $(id); el.textContent = msg || ""; el.classList.toggle("hidden", !msg); }
-
-async function loadRoster() {
-  try {
-    roster = await rpc("list_roster_v2");
-    const cas = [...new Set(roster.map((r) => r.ca))];
-    $("f-ca").innerHTML = `<option value="">Chọn ca học</option>` + cas.map((c) => `<option>${esc(c)}</option>`).join("");
-  } catch (e) {
-    $("f-ca").innerHTML = `<option value="">Không tải được danh sách</option>`;
-    showErr("e-form", "Không tải được danh sách sinh viên. Kiểm tra kết nối mạng rồi tải lại trang.");
-  }
-}
-$("f-ca").addEventListener("change", () => {
-  const ca = $("f-ca").value, sel = $("f-name");
-  showErr("e-ca", "");
-  if (!ca) { sel.disabled = true; sel.innerHTML = `<option value="">Chọn ca học trước</option>`; return; }
-  sel.disabled = false;
-  sel.innerHTML = `<option value="">Chọn tên của bạn</option>` + roster.filter((r) => r.ca === ca)
-    .map((r) => `<option value="${r.id}">${r.stt}. ${esc(r.ho_ten)} (${esc(r.lop)})${r.da_nhan ? " – đã vào thi" : ""}</option>`).join("");
-});
 $("f-ma").addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, ""); showErr("e-ma", ""); });
 
 $("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const ca = $("f-ca").value, rid = $("f-name").value, ma = $("f-ma").value.trim();
-  showErr("e-ca", ca ? "" : "Chọn ca học của bạn.");
-  showErr("e-name", rid ? "" : "Chọn tên của bạn trong danh sách.");
-  showErr("e-ma", /^\d{6,12}$/.test(ma) ? "" : "Mã sinh viên gồm 6 đến 12 chữ số.");
+  const ma = $("f-ma").value.trim();
   showErr("e-form", "");
-  if (!ca || !rid || !/^\d{6,12}$/.test(ma)) return;
-  const btn = $("btn-start"); btn.disabled = true; btn.textContent = "Đang mở bài…";
+  if (!/^\d{6,12}$/.test(ma)) return showErr("e-ma", "Nhập mã sinh viên của bạn (chỉ gồm chữ số).");
+  const btn = $("btn-check"); btn.disabled = true; btn.textContent = "Đang kiểm tra…";
   try {
-    const r = await rpc("start_exam", { p_roster_id: +rid, p_ma_sv: ma, p_ua: navigator.userAgent });
+    const s = await rpc("lookup_student", { p_ma_sv: ma });
+    $("c-name").textContent = s.ho_ten;
+    $("c-meta").textContent = `Lớp ${s.lop}, ${s.ca.toLowerCase()}`;
+    $("btn-start").textContent = s.da_bat_dau ? "Làm tiếp bài" : "Bắt đầu làm bài";
+    $("login-form").classList.add("hidden");
+    $("confirm").classList.remove("hidden");
+    $("btn-start").focus();
+  } catch (err) {
+    showErr("e-ma", err.message);
+  } finally { btn.disabled = false; btn.textContent = "Tiếp tục"; }
+});
+$("btn-back").addEventListener("click", () => {
+  $("confirm").classList.add("hidden"); $("login-form").classList.remove("hidden");
+  showErr("e-form", ""); $("f-ma").value = ""; $("f-ma").focus();
+});
+$("btn-start").addEventListener("click", async () => {
+  const btn = $("btn-start"), label = btn.textContent; btn.disabled = true; btn.textContent = "Đang mở bài…";
+  showErr("e-form", "");
+  try {
+    const r = await rpc("start_exam_v2", { p_ma_sv: $("f-ma").value.trim(), p_ua: navigator.userAgent });
     ls.set(LS_TOKEN, r.token);
     await openExam(r.token);
   } catch (err) {
     showErr("e-form", err.message);
-  } finally { btn.disabled = false; btn.textContent = "Bắt đầu làm bài"; }
+  } finally { btn.disabled = false; btn.textContent = label; }
 });
 
 /* ---------------- Làm bài ---------------- */
@@ -547,7 +545,6 @@ function startGuards() {
   if (tok) {
     try { await openExam(tok); return; } catch { ls.del(LS_TOKEN); }
   }
-  loadRoster();
 })();
 </script>
 </body>
