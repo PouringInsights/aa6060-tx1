@@ -94,7 +94,7 @@
   .save.err { color: var(--alert); font-weight: 600; white-space: normal; }
 
   /* Nội dung đề */
-  .exam { padding: 24px 0 96px; user-select: none; -webkit-user-select: none; }
+  .exam { padding: 24px 0 96px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   .exam .lead { color: var(--muted); }
   .q { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px 20px; margin: 20px 0; }
   .q h3 { margin-bottom: 8px; }
@@ -250,6 +250,7 @@
 const SUPABASE_URL = "https://qhqlczscdutoycrhnslf.supabase.co";
 const SUPABASE_KEY = "sb_publishable_ycYOB0IPdPJFca1sSxEggA_HAmAxbhy"; // khoá công khai, chỉ gọi được 4 hàm của bài thi
 const LS_TOKEN = "aa6060_tx1_token", LS_BACKUP = "aa6060_tx1_backup";
+const MAX_INSERT = 20; // số ký tự tối đa được thêm trong một lần nhập
 
 const $ = (id) => document.getElementById(id);
 const ls = {
@@ -403,16 +404,24 @@ function renderExam(c, order) {
     answers[id] = { ...(answers[id] || {}), choice: el.value }; markDirty();
   }));
   $("exam").querySelectorAll("textarea").forEach((ta) => {
-    let prevLen = ta.value.length;
+    let prev = ta.value;
     ta.addEventListener("beforeinput", (e) => {
-      if (e.inputType === "insertFromPaste" || e.inputType === "insertFromDrop" || e.inputType === "insertFromPasteAsQuotation") {
+      if (/^insertFrom(Paste|Drop|Yank|PasteAsQuotation)$/.test(e.inputType)) {
         e.preventDefault(); logEvent("paste_blocked", { f: ta.dataset.f }); flash(ta.dataset.f, "Không dán được nội dung. Hãy gõ trực tiếp.");
       }
     });
     ta.addEventListener("keydown", () => { keyCounts[ta.dataset.f] = (keyCounts[ta.dataset.f] || 0) + 1; });
-    ta.addEventListener("input", () => {
-      const f = ta.dataset.f, d = ta.value.length - prevLen; prevLen = ta.value.length;
-      if (d > 40) logEvent("burst", { f, n: d });
+    ta.addEventListener("input", (e) => {
+      const f = ta.dataset.f, d = ta.value.length - prev.length;
+      // Chèn > MAX_INSERT ký tự trong một lần (gợi ý clipboard của bàn phím điện thoại, nhập giọng nói, phím tắt văn bản) = dán → huỷ.
+      if (d > MAX_INSERT) {
+        const pos = Math.max(0, ta.selectionStart - d);
+        ta.value = prev; ta.setSelectionRange(pos, pos);
+        logEvent("insert_blocked", { f, n: d, type: e.inputType || "" });
+        flash(f, "Không dán được nội dung. Hãy gõ trực tiếp.");
+        return;
+      }
+      prev = ta.value;
       if (f.startsWith("q")) answers[f] = { ...(answers[f] || {}), why: ta.value }; else answers[f] = ta.value;
       markDirty();
     });
@@ -544,9 +553,10 @@ function startGuards() {
   document.addEventListener("contextmenu", (e) => block(e, "menu_blocked"));
   document.addEventListener("keydown", (e) => {
     const k = (e.key || "").toLowerCase(), mod = e.ctrlKey || e.metaKey;
+    // Ctrl+Shift+S (Edge Web capture, Firefox Screenshot), Cmd+Shift+3/4/5 (macOS): chặn nếu trình duyệt cho phép và che đề ngay.
+    if (mod && e.shiftKey && ["s", "3", "4", "5"].includes(k)) { shield(true); block(e, "screenshot_key"); return; }
     if (mod && ["c", "x", "v", "p", "s", "u"].includes(k)) block(e, "key_" + k);
     if (mod && k === "a" && !(e.target instanceof HTMLTextAreaElement)) block(e, "key_a");
-    if (e.metaKey && e.shiftKey && ["3", "4", "5", "s"].includes(k)) logEvent("screenshot_key");
   });
   document.addEventListener("keyup", (e) => {
     if (e.key === "PrintScreen") { shield(true); logEvent("screenshot_key"); try { navigator.clipboard.writeText(""); } catch {} }
