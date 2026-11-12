@@ -220,7 +220,7 @@
       <div class="save" id="save">Chưa có thay đổi</div>
       <button class="btn" type="button" id="btn-submit-top">Nộp bài</button>
     </div>
-    <p class="phase hidden" id="phase">Đã hết 50 phút. Bạn có thêm 10 phút; hết thời gian này bài được nộp tự động.</p>
+    <p class="phase hidden" id="phase"></p>
   </header>
   <div class="shield hidden" id="shield" aria-hidden="true"><p>Nội dung bài thi được ẩn khi bạn rời cửa sổ này.<br>Bấm vào đây để làm tiếp.</p></div>
   <div class="exam wrap" id="exam"></div>
@@ -471,7 +471,8 @@ async function doSave(final, opts = {}) {
   } finally { saving = false; }
 }
 
-const EXTRA_MS = 10 * 60000; // 50 phút chính + 10 phút thêm giờ = 60 phút (settings.duration_min trên máy chủ)
+const EXTRA_MS = 100 * 60000; // 50 phút chính + 100 phút thêm giờ = 150 phút (settings.duration_min trên máy chủ)
+const EXTRA_MSG = `Đã hết 50 phút. Bạn có thêm ${EXTRA_MS / 60000} phút; hết thời gian này bài được nộp tự động.`;
 let extNotified = false;
 const fmt = (ms) => `${String(Math.floor(ms / 60000)).padStart(2, "0")}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, "0")}`;
 function tick() {
@@ -484,8 +485,8 @@ function tick() {
     el.textContent = `Thêm giờ, còn ${fmt(left)}`;
     if (!extNotified) {
       extNotified = true; logEvent("extra_time");
-      $("phase").classList.remove("hidden");
-      announce("Đã hết 50 phút. Bạn có thêm 10 phút; hết thời gian này bài được nộp tự động.");
+      $("phase").textContent = EXTRA_MSG; $("phase").classList.remove("hidden");
+      announce(EXTRA_MSG);
     }
   }
   if (left <= 5 * 60000) {
